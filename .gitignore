@@ -46,3 +46,9 @@ Thumbs.db
 *.temp
 cache/
 .cache/
+
+# Large model checkpoints
+*.pth
+*.pt
+*.ckpt
+*.pth
