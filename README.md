@@ -31,7 +31,7 @@ The application flow is:
 - Uvicorn
 - PyTorch
 - LangGraph
-- OpenAI API
+- Gemini API
 - NumPy
 - KSL vocabulary and trained model checkpoints
 
@@ -109,4 +109,3 @@ The backend depends on model and data files such as:
 - `backend/ml/rvq_vae_best.pth`
 - `backend/data/index_meta.pkl`
 - `backend/data/faiss_index.bin`
-

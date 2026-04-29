@@ -1,215 +1,165 @@
-import React, { useEffect, useRef } from 'react';
-import { useGLTF } from '@react-three/drei';
+import React, { forwardRef, useEffect, useRef } from 'react';
+import { Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 
-const MODEL_PATH = '/models/avatar.glb?v=101';
+const JOINT_COLOR = '#00ffcc';
+const BONE_COLOR = '#ffffff';
+const JOINT_SIZE = 0.04;
+const HEAD_RADIUS = 0.13;
 
-const BONE_ALIASES = {
-  spine: ['Spine', 'mixamorigSpine'],
-  spine1: ['Spine1', 'mixamorigSpine1'],
-  spine2: ['Spine2', 'mixamorigSpine2'],
-  neck: ['Neck', 'mixamorigNeck'],
-  head: ['Head', 'mixamorigHead'],
-  rightShoulder: ['RightShoulder', 'mixamorigRightShoulder'],
-  leftShoulder: ['LeftShoulder', 'mixamorigLeftShoulder'],
-  rightArm: ['RightArm', 'mixamorigRightArm', 'arm_r'],
-  leftArm: ['LeftArm', 'mixamorigLeftArm', 'arm_l'],
-  rightForeArm: ['RightForeArm', 'mixamorigRightForeArm'],
-  leftForeArm: ['LeftForeArm', 'mixamorigLeftForeArm'],
-  rightHand: ['RightHand', 'mixamorigRightHand'],
-  leftHand: ['LeftHand', 'mixamorigLeftHand'],
-};
+const BoneNode = forwardRef(function BoneNode({ position, name, children }, ref) {
+  return (
+    <group ref={ref} position={position} name={name}>
+      <mesh>
+        <sphereGeometry args={[JOINT_SIZE, 16, 16]} />
+        <meshBasicMaterial color={JOINT_COLOR} wireframe />
+      </mesh>
+      {children}
+    </group>
+  );
+});
 
-const FINGER_CHAINS = {
-  right: [
-    ['RightHandThumb1', 'mixamorigRightHandThumb1'],
-    ['RightHandThumb2', 'mixamorigRightHandThumb2'],
-    ['RightHandThumb3', 'mixamorigRightHandThumb3'],
-    ['RightHandIndex1', 'mixamorigRightHandIndex1'],
-    ['RightHandIndex2', 'mixamorigRightHandIndex2'],
-    ['RightHandIndex3', 'mixamorigRightHandIndex3'],
-    ['RightHandMiddle1', 'mixamorigRightHandMiddle1'],
-    ['RightHandMiddle2', 'mixamorigRightHandMiddle2'],
-    ['RightHandMiddle3', 'mixamorigRightHandMiddle3'],
-    ['RightHandRing1', 'mixamorigRightHandRing1'],
-    ['RightHandRing2', 'mixamorigRightHandRing2'],
-    ['RightHandRing3', 'mixamorigRightHandRing3'],
-    ['RightHandPinky1', 'mixamorigRightHandPinky1'],
-    ['RightHandPinky2', 'mixamorigRightHandPinky2'],
-    ['RightHandPinky3', 'mixamorigRightHandPinky3'],
-  ],
-  left: [
-    ['LeftHandThumb1', 'mixamorigLeftHandThumb1'],
-    ['LeftHandThumb2', 'mixamorigLeftHandThumb2'],
-    ['LeftHandThumb3', 'mixamorigLeftHandThumb3'],
-    ['LeftHandIndex1', 'mixamorigLeftHandIndex1'],
-    ['LeftHandIndex2', 'mixamorigLeftHandIndex2'],
-    ['LeftHandIndex3', 'mixamorigLeftHandIndex3'],
-    ['LeftHandMiddle1', 'mixamorigLeftHandMiddle1'],
-    ['LeftHandMiddle2', 'mixamorigLeftHandMiddle2'],
-    ['LeftHandMiddle3', 'mixamorigLeftHandMiddle3'],
-    ['LeftHandRing1', 'mixamorigLeftHandRing1'],
-    ['LeftHandRing2', 'mixamorigLeftHandRing2'],
-    ['LeftHandRing3', 'mixamorigLeftHandRing3'],
-    ['LeftHandPinky1', 'mixamorigLeftHandPinky1'],
-    ['LeftHandPinky2', 'mixamorigLeftHandPinky2'],
-    ['LeftHandPinky3', 'mixamorigLeftHandPinky3'],
-  ],
-};
+const HeadNode = forwardRef(function HeadNode({ position }, ref) {
+  return (
+    <group ref={ref} position={position} name="Head">
+      <mesh>
+        <ringGeometry args={[HEAD_RADIUS * 0.72, HEAD_RADIUS, 48]} />
+        <meshBasicMaterial color={JOINT_COLOR} side={2} />
+      </mesh>
+      <mesh position={[0, 0.03, 0]}>
+        <circleGeometry args={[JOINT_SIZE * 0.75, 24]} />
+        <meshBasicMaterial color={JOINT_COLOR} />
+      </mesh>
+    </group>
+  );
+});
 
-function getBone(nodes, aliases) {
-  return aliases.map((name) => nodes[name]).find(Boolean) || null;
+function BoneLine({ to }) {
+  return (
+    <group>
+      <Line
+        points={[
+          [0, 0, 0],
+          to,
+        ]}
+        color={BONE_COLOR}
+        lineWidth={2.2}
+        dashed
+        dashSize={0.06}
+        gapSize={0.025}
+        transparent
+        opacity={0.95}
+      />
+      <Line
+        points={[
+          [0, 0, 0],
+          to,
+        ]}
+        color={JOINT_COLOR}
+        lineWidth={0.7}
+        transparent
+        opacity={0.35}
+      />
+    </group>
+  );
 }
 
-function cloneRotation(rotation) {
-  return { x: rotation.x, y: rotation.y, z: rotation.z };
-}
+function applyRotation(ref, frameData, dataKey) {
+  const rotation = frameData?.[dataKey];
+  if (!ref.current || !rotation) return;
 
-function ensureRestRotation(store, key, bone) {
-  if (!bone) return null;
-  if (!store[key]) {
-    store[key] = cloneRotation(bone.rotation);
-  }
-  return store[key];
-}
-
-function applyRotationOffset(bone, baseRotation, offset, blend = 0.35) {
-  if (!bone || !baseRotation) return;
-
-  const targetX = baseRotation.x + (offset?.x ?? 0);
-  const targetY = baseRotation.y + (offset?.y ?? 0);
-  const targetZ = baseRotation.z + (offset?.z ?? 0);
-
-  bone.rotation.x += (targetX - bone.rotation.x) * blend;
-  bone.rotation.y += (targetY - bone.rotation.y) * blend;
-  bone.rotation.z += (targetZ - bone.rotation.z) * blend;
-}
-
-function applyFingerCurl(nodes, side, curl, restRotations, blend = 0.35) {
-  const direction = side === 'left' ? -1 : 1;
-
-  FINGER_CHAINS[side].forEach((aliases, index) => {
-    const bone = getBone(nodes, aliases);
-    if (!bone) return;
-
-    const restKey = aliases[0];
-    const baseRotation = ensureRestRotation(restRotations, restKey, bone);
-    const thumbBias = aliases[0].includes('Thumb') ? 0.45 : 1;
-    const segmentBias = index % 3 === 0 ? 0.9 : 1.1;
-    const curlOffset = direction * curl * thumbBias * segmentBias;
-
-    applyRotationOffset(
-      bone,
-      baseRotation,
-      { x: curlOffset, y: 0, z: curlOffset * 0.08 },
-      blend
-    );
-  });
+  ref.current.rotation.set(rotation.x ?? 0, rotation.y ?? 0, rotation.z ?? 0);
 }
 
 export default function Avatar({ animationData }) {
-  const { scene, nodes } = useGLTF(MODEL_PATH);
   const frameRef = useRef(0);
   const timerRef = useRef(0);
-  const restRotationsRef = useRef({});
+  const hasFinishedRef = useRef(false);
 
-  useEffect(() => {
-    if (!nodes) return;
-
-    console.log('3D model loaded successfully.');
-    console.log('Detected Bones:', Object.keys(nodes));
-
-    const capturedRotations = {};
-
-    Object.entries(BONE_ALIASES).forEach(([key, aliases]) => {
-      const bone = getBone(nodes, aliases);
-      if (bone) {
-        capturedRotations[key] = cloneRotation(bone.rotation);
-      }
-    });
-
-    Object.values(FINGER_CHAINS).forEach((fingerAliases) => {
-      fingerAliases.forEach((aliases) => {
-        const bone = getBone(nodes, aliases);
-        if (bone) {
-          capturedRotations[aliases[0]] = cloneRotation(bone.rotation);
-        }
-      });
-    });
-
-    restRotationsRef.current = capturedRotations;
-  }, [nodes]);
+  const spineRef = useRef();
+  const neckRef = useRef();
+  const headRef = useRef();
+  const rightShoulderRef = useRef();
+  const leftShoulderRef = useRef();
+  const rightArmRef = useRef();
+  const leftArmRef = useRef();
+  const rightForeArmRef = useRef();
+  const leftForeArmRef = useRef();
+  const rightHandRef = useRef();
+  const leftHandRef = useRef();
 
   useEffect(() => {
     frameRef.current = 0;
     timerRef.current = 0;
+    hasFinishedRef.current = false;
   }, [animationData]);
 
   useFrame((state, delta) => {
-    if (!nodes) return;
-
-    const restRotations = restRotationsRef.current;
-    const hasAnimation = animationData && animationData.length > 0;
+    const hasAnimation = Array.isArray(animationData) && animationData.length > 0;
 
     timerRef.current += delta;
     if (timerRef.current < 1 / 30) return;
     timerRef.current = 0;
 
-    const frameData = hasAnimation ? animationData[frameRef.current] : {};
+    if (!hasAnimation) return;
 
-    const spine = getBone(nodes, BONE_ALIASES.spine);
-    const spine1 = getBone(nodes, BONE_ALIASES.spine1);
-    const spine2 = getBone(nodes, BONE_ALIASES.spine2);
-    const neck = getBone(nodes, BONE_ALIASES.neck);
-    const head = getBone(nodes, BONE_ALIASES.head);
-    const rightShoulder = getBone(nodes, BONE_ALIASES.rightShoulder);
-    const leftShoulder = getBone(nodes, BONE_ALIASES.leftShoulder);
-    const rightArm = getBone(nodes, BONE_ALIASES.rightArm);
-    const leftArm = getBone(nodes, BONE_ALIASES.leftArm);
-    const rightForeArm = getBone(nodes, BONE_ALIASES.rightForeArm);
-    const leftForeArm = getBone(nodes, BONE_ALIASES.leftForeArm);
-    const rightHand = getBone(nodes, BONE_ALIASES.rightHand);
-    const leftHand = getBone(nodes, BONE_ALIASES.leftHand);
+    const frameData = animationData[frameRef.current];
 
-    applyRotationOffset(spine, ensureRestRotation(restRotations, 'spine', spine), frameData.spine_rotation);
-    applyRotationOffset(spine1, ensureRestRotation(restRotations, 'spine1', spine1), frameData.spine_upper_rotation || frameData.spine_rotation);
-    applyRotationOffset(spine2, ensureRestRotation(restRotations, 'spine2', spine2), frameData.spine_upper_rotation);
-    applyRotationOffset(neck, ensureRestRotation(restRotations, 'neck', neck), frameData.neck_rotation, 0.3);
-    applyRotationOffset(head, ensureRestRotation(restRotations, 'head', head), frameData.head_rotation, 0.28);
-    applyRotationOffset(
-      rightShoulder,
-      ensureRestRotation(restRotations, 'rightShoulder', rightShoulder),
-      frameData.right_shoulder_rotation
-    );
-    applyRotationOffset(
-      leftShoulder,
-      ensureRestRotation(restRotations, 'leftShoulder', leftShoulder),
-      frameData.left_shoulder_rotation
-    );
-    applyRotationOffset(rightArm, ensureRestRotation(restRotations, 'rightArm', rightArm), frameData.right_arm_rotation);
-    applyRotationOffset(leftArm, ensureRestRotation(restRotations, 'leftArm', leftArm), frameData.left_arm_rotation);
-    applyRotationOffset(
-      rightForeArm,
-      ensureRestRotation(restRotations, 'rightForeArm', rightForeArm),
-      frameData.right_forearm_rotation
-    );
-    applyRotationOffset(
-      leftForeArm,
-      ensureRestRotation(restRotations, 'leftForeArm', leftForeArm),
-      frameData.left_forearm_rotation
-    );
-    applyRotationOffset(rightHand, ensureRestRotation(restRotations, 'rightHand', rightHand), frameData.right_hand_rotation);
-    applyRotationOffset(leftHand, ensureRestRotation(restRotations, 'leftHand', leftHand), frameData.left_hand_rotation);
+    applyRotation(spineRef, frameData, 'spine_rotation');
+    applyRotation(neckRef, frameData, 'neck_rotation');
+    applyRotation(headRef, frameData, 'head_rotation');
 
-    applyFingerCurl(nodes, 'right', frameData.right_hand_curl ?? 0, restRotations, 0.32);
-    applyFingerCurl(nodes, 'left', frameData.left_hand_curl ?? 0, restRotations, 0.32);
+    applyRotation(rightShoulderRef, frameData, 'right_shoulder_rotation');
+    applyRotation(rightArmRef, frameData, 'right_arm_rotation');
+    applyRotation(rightForeArmRef, frameData, 'right_forearm_rotation');
+    applyRotation(rightHandRef, frameData, 'right_hand_rotation');
 
-    if (hasAnimation) {
-      frameRef.current = (frameRef.current + 1) % animationData.length;
+    applyRotation(leftShoulderRef, frameData, 'left_shoulder_rotation');
+    applyRotation(leftArmRef, frameData, 'left_arm_rotation');
+    applyRotation(leftForeArmRef, frameData, 'left_forearm_rotation');
+    applyRotation(leftHandRef, frameData, 'left_hand_rotation');
+
+    if (!hasFinishedRef.current && frameRef.current < animationData.length - 1) {
+      frameRef.current += 1;
+    } else {
+      frameRef.current = animationData.length - 1;
+      hasFinishedRef.current = true;
     }
   });
 
-  return <primitive object={scene} scale={2} position={[0, -2, 0]} />;
-}
+  return (
+    <group position={[0, -2, 0]} scale={2}>
+      <BoneNode ref={spineRef} name="Spine" position={[0, 1, 0]}>
+        <BoneLine to={[0, 0.4, 0]} />
+        <BoneNode ref={neckRef} name="Neck" position={[0, 0.4, 0]}>
+          <BoneLine to={[0, 0.2, 0]} />
+          <HeadNode ref={headRef} position={[0, 0.2, 0]} />
+        </BoneNode>
 
-useGLTF.preload(MODEL_PATH);
+        <BoneLine to={[-0.2, 0.3, 0]} />
+        <BoneNode ref={rightShoulderRef} name="RightShoulder" position={[-0.2, 0.3, 0]}>
+          <BoneLine to={[-0.2, 0, 0]} />
+          <BoneNode ref={rightArmRef} name="RightArm" position={[-0.2, 0, 0]}>
+            <BoneLine to={[0, -0.3, 0]} />
+            <BoneNode ref={rightForeArmRef} name="RightForeArm" position={[0, -0.3, 0]}>
+              <BoneLine to={[0, -0.3, 0]} />
+              <BoneNode ref={rightHandRef} name="RightHand" position={[0, -0.3, 0]} />
+            </BoneNode>
+          </BoneNode>
+        </BoneNode>
+
+        <BoneLine to={[0.2, 0.3, 0]} />
+        <BoneNode ref={leftShoulderRef} name="LeftShoulder" position={[0.2, 0.3, 0]}>
+          <BoneLine to={[0.2, 0, 0]} />
+          <BoneNode ref={leftArmRef} name="LeftArm" position={[0.2, 0, 0]}>
+            <BoneLine to={[0, -0.3, 0]} />
+            <BoneNode ref={leftForeArmRef} name="LeftForeArm" position={[0, -0.3, 0]}>
+              <BoneLine to={[0, -0.3, 0]} />
+              <BoneNode ref={leftHandRef} name="LeftHand" position={[0, -0.3, 0]} />
+            </BoneNode>
+          </BoneNode>
+        </BoneNode>
+      </BoneNode>
+    </group>
+  );
+}

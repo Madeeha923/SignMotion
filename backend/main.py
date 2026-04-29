@@ -15,8 +15,9 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from google import genai
+from google.genai import types
 from langgraph.graph import END, StateGraph
-from openai import OpenAI
 from pydantic import BaseModel
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -26,7 +27,9 @@ if hasattr(sys.stdout, "reconfigure"):
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-client = OpenAI()
+gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
+gemini_translator_available = bool(gemini_api_key and gemini_api_key != "your-gemini-api-key-here")
 
 app = FastAPI(title="Signvrse Generative AI API")
 
@@ -49,6 +52,43 @@ MIN_FULL_CANDIDATE_COVERAGE = 0.65
 MIN_SEGMENT_FRAMES = 10
 RotationDict = Dict[str, float]
 RVQ_TOKEN_KEYS = ["base_tokens", "residual_1", "residual_2", "residual_3", "residual_4", "residual_5"]
+
+TOKEN_CORRECTIONS = {
+    "ANYBODE": "ANYBODY",
+    "ANYBODYE": "ANYBODY",
+    "ANYONEE": "ANYONE",
+    "FURAHI": "HAPPY",
+    "KUZALIWA": "BIRTHDAY",
+    "SIKU": "",
+    "TOMMORROW": "TOMORROW",
+    "TOMOROW": "TOMORROW",
+    "2MORROW": "TOMORROW",
+    "BIRTHDAYY": "BIRTHDAY",
+    "HAPY": "HAPPY",
+    "HELLOO": "HELLO",
+}
+
+FALLBACK_DROP_TOKENS = {
+    "A",
+    "AN",
+    "AM",
+    "ARE",
+    "BE",
+    "IS",
+    "THE",
+    "TO",
+    "WAS",
+    "WERE",
+    "WILL",
+}
+
+FALLBACK_PHRASE_REPLACEMENTS = {
+    "I AM": "ME",
+    "I WILL": "",
+    "I WANT TO": "ME WANT",
+    "DO YOU": "YOU",
+    "ARE YOU": "YOU",
+}
 
 CONTROL_SCALE_LAYOUT: Dict[str, Tuple[float, float, float]] = {
     "spine_rotation": (0.10, 0.14, 0.08),
@@ -86,13 +126,31 @@ def backend_path(*parts: str) -> str:
     return os.path.join(BACKEND_DIR, *parts)
 
 
+def normalize_token(token: str) -> str:
+    cleaned = token.upper().strip().replace("\u2019", "'").replace("\u00e2\u20ac\u2122", "'")
+    cleaned = cleaned.strip(".,!?;:\"()[]{}")
+    return TOKEN_CORRECTIONS.get(cleaned, cleaned)
+
+
+def fallback_english_to_gloss(text: str) -> str:
+    """Small offline translator used when the Gemini quota/API is unavailable."""
+    normalized_text = " ".join(normalize_token(token) for token in text.split())
+
+    for phrase, replacement in FALLBACK_PHRASE_REPLACEMENTS.items():
+        normalized_text = re.sub(rf"\b{re.escape(phrase)}\b", replacement, normalized_text)
+
+    tokens = normalize_gloss_text(normalized_text)
+    content_tokens = [token for token in tokens if token not in FALLBACK_DROP_TOKENS]
+    return " ".join(content_tokens or tokens)
+
+
 def legacy_lookup_vocab_index(word: str) -> int:
-    normalized = word.upper().strip()
+    normalized = normalize_token(word)
     candidates = [
         normalized,
         normalized.rstrip(".,!?"),
-        normalized.replace("’", "'"),
-        normalized.rstrip(".,!?").replace("’", "'"),
+        normalized.replace("\u00e2\u20ac\u2122", "'"),
+        normalized.rstrip(".,!?").replace("\u00e2\u20ac\u2122", "'"),
     ]
     for candidate in candidates:
         if candidate in vocab:
@@ -102,11 +160,11 @@ def legacy_lookup_vocab_index(word: str) -> int:
 
 def normalize_gloss_text(text: str) -> List[str]:
     cleaned = re.sub(r"[^A-Z0-9 ]+", " ", text.upper().replace("//", " "))
-    return [token for token in cleaned.split() if token]
+    return [normalize_token(token) for token in cleaned.split() if normalize_token(token)]
 
 
 def lookup_vocab_index(word: str) -> int:
-    normalized = word.upper().strip().replace("â€™", "'").replace("’", "'")
+    normalized = normalize_token(word)
     stripped = normalized.strip(".,!?;:\"()[]{}")
     candidates = [
         normalized,
@@ -161,30 +219,6 @@ def find_best_retrieval_match(gloss: str) -> Tuple[Dict[str, Any] | None, float]
             best_score = score
 
     return best_entry, best_score
-def debug_generator_agent(state):
-    gloss = state["ksl_gloss"]
-    
-    # 1. Convert Text to Tensor
-    words = gloss.split()
-    text_indices = [vocab.get(w, 0) for w in words]
-    
-    # --- ADD THESE 3 LINES ---
-    print(f"🕵️ DEBUG GLOSS: {words}")
-    print(f"🕵️ DEBUG INDICES: {text_indices}")
-    # -------------------------
-    
-    text_tensor = torch.tensor([text_indices], dtype=torch.long).to(DEVICE)
-    
-    with torch.no_grad():
-        latent_vector = brain(text_tensor)
-        # --- ADD THIS LINE ---
-        print(f"🕵️ DEBUG LATENT SUM: {latent_vector.sum().item()}")
-        # ---------------------
-        
-        motion_frames = autoencoder.decoder(latent_vector).squeeze(0).cpu().numpy()
-        
-    # ... rest of the formatting code
-
 def build_retrieval_latent_frames(entry: Dict[str, Any]) -> np.ndarray:
     if "latent_frames" in entry:
         return entry["latent_frames"]
@@ -507,25 +541,42 @@ class GraphState(TypedDict):
     final_3d_data: List[Dict]
 
 def translator_agent(state: GraphState):
-    """Node 1: Translates English to authentic KSL Gloss using OpenAI."""
+    """Node 1: Translates English to authentic KSL Gloss using Gemini."""
+    global gemini_translator_available
     text = state["english_text"]
+
+    if not gemini_translator_available or client is None:
+        real_gloss = fallback_english_to_gloss(text)
+        print(f"[Translator Agent] offline fallback '{text}' -> '{real_gloss}'")
+        return {"ksl_gloss": real_gloss}
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are an expert linguist in Kenyan Sign Language (KSL). You only output the final KSL Gloss in ALL CAPS. You strictly drop 'to be' verbs and articles. No punctuation."
-                },
-                {"role": "user", "content": f"Translate to KSL Gloss:\n{text}"}
-            ],
-            temperature=0.1
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"Translate to KSL Gloss:\n{text}",
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "You are an expert linguist in Kenyan Sign Language (KSL). "
+                    "Output only KSL gloss tokens written as English words in ALL CAPS. "
+                    "Do not translate into Swahili, Kiswahili, or any spoken-language sentence. "
+                    "Do not output words like FURAHI, SIKU, KUZALIWA, ASANTE, or JAMBO. "
+                    "Use short gloss order, drop 'to be' verbs and articles, and use no punctuation. "
+                    "Examples: happy birthday -> HAPPY BIRTHDAY; I am going to college -> ME GO COLLEGE; "
+                    "happy birthday to you -> HAPPY BIRTHDAY YOU."
+                ),
+                temperature=0.1,
+            ),
         )
-        real_gloss = response.choices[0].message.content.strip()
+        real_gloss = (response.text or "").strip()
+        if not real_gloss:
+            raise ValueError("Gemini returned an empty gloss")
+        real_gloss = " ".join(normalize_gloss_text(real_gloss))
     except Exception as e:
-        print(f"OpenAI Error: {e}")
-        real_gloss = text.upper() # Fallback to uppercase english if API fails
+        print(f"Gemini Error: {e}")
+        error_text = str(e).lower()
+        if "api_key_invalid" in error_text or "api key not valid" in error_text or "quota" in error_text or "429" in error_text:
+            gemini_translator_available = False
+        real_gloss = fallback_english_to_gloss(text)
     
     print(f"[Translator Agent] '{text}' -> '{real_gloss}'")
     return {"ksl_gloss": real_gloss}
@@ -602,5 +653,6 @@ async def generate_sign_language(req: TranslateRequest):
     }
 
 if __name__ == "__main__":
-    print("🚀 Starting Signvrse Generative API on http://localhost:8000")
+    print("Starting Signvrse Generative API on http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
