@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
+from huggingface_hub import hf_hub_download
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel
 
@@ -42,6 +43,7 @@ app.add_middleware(
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+HF_MODEL_REPO_ID = os.getenv("HF_MODEL_REPO_ID", "madeeha01/signmotion")
 MAX_FRAMES = 150
 MAX_RETRIEVAL_SEQUENCE_FRAMES = 180
 CHUNK_COUNT = 40
@@ -124,6 +126,16 @@ ARM_CONTROL_NAMES = {
 
 def backend_path(*parts: str) -> str:
     return os.path.join(BACKEND_DIR, *parts)
+
+
+def model_asset_path(*parts: str) -> str:
+    local_path = backend_path(*parts)
+    if os.path.exists(local_path):
+        return local_path
+
+    filename = "/".join(parts)
+    print(f"Downloading {filename} from Hugging Face repo {HF_MODEL_REPO_ID}...")
+    return hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=filename)
 
 
 def normalize_token(token: str) -> str:
@@ -490,29 +502,29 @@ try:
     with open(backend_path("ksl_vocab.json"), "r", encoding="utf-8") as f:
         vocab = json.load(f)
 except FileNotFoundError:
-    print("WARNING: ksl_vocab.json not found! Please ensure it's in the same directory.")
+    print("WARNING: ksl_vocab.json not found! Please ensure it's in the Space backend folder.")
     vocab = {"<PAD>": 0}
 
 print("Booting up KSL Generative Engine...")
 autoencoder = MotionAutoencoder(input_dim=668, latent_dim=512).to(DEVICE)
 autoencoder.load_state_dict(
-    torch.load(backend_path("ksl_movement_dictionary.pth"), map_location=DEVICE, weights_only=True)
+    torch.load(model_asset_path("ksl_movement_dictionary.pth"), map_location=DEVICE, weights_only=True)
 )
 autoencoder.eval()
 
 brain = TextToMotionBrain(vocab_size=len(vocab)).to(DEVICE)
 brain.load_state_dict(
-    torch.load(backend_path("ksl_text_brain.pth"), map_location=DEVICE, weights_only=True)
+    torch.load(model_asset_path("ksl_text_brain.pth"), map_location=DEVICE, weights_only=True)
 )
 brain.eval()
 
 print("Loading retrieval gloss metadata...")
 try:
-    with open(backend_path("data", "index_meta.pkl"), "rb") as f:
+    with open(model_asset_path("data", "index_meta.pkl"), "rb") as f:
         retrieval_meta = pickle.load(f)
 
     rvq_checkpoint = torch.load(
-        backend_path("ml", "rvq_vae_best.pth"),
+        model_asset_path("ml", "rvq_vae_best.pth"),
         map_location="cpu",
         weights_only=True,
     )

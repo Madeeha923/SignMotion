@@ -4,6 +4,8 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import Avatar from './Avatar';
 
+const API_BASE_URL = 'https://madeeha01-signvrse.hf.space';
+
 export default function App() {
   const [inputText, setInputText] = useState("");
   const [glossText, setGlossText] = useState("");
@@ -15,7 +17,7 @@ export default function App() {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:8000/translate-to-sign', {
+      const response = await axios.post(`${API_BASE_URL}/translate-to-sign`, {
         sentence: inputText.trim(),
       });
 
