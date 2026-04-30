@@ -25,7 +25,7 @@
 
 ##  How It Works (The Pipeline)
 
-### 1. The Data & Training (Kaggle)
+### 1. The Data & Training
 The foundation of the project is built on 12,467 continuous spatial-temporal sequences. Instead of a direct text-to-3D map, the AI was trained in two stages:
 * **The Body (Autoencoder):** Compresses 668 physical features into a stable 512-dimensional latent space, teaching the AI the physical limits of human joints.
 * **The Brain (Bi-LSTM):** Reads KSL vocabulary and learns to project it into the safe 512-dimensional latent space.
