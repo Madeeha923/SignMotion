@@ -128,6 +128,10 @@ def backend_path(*parts: str) -> str:
     return os.path.join(BACKEND_DIR, *parts)
 
 
+def project_path(*parts: str) -> str:
+    return os.path.join(PROJECT_ROOT, *parts)
+
+
 def model_asset_path(*parts: str) -> str:
     local_path = backend_path(*parts)
     if os.path.exists(local_path):
@@ -136,6 +140,13 @@ def model_asset_path(*parts: str) -> str:
     filename = "/".join(parts)
     print(f"Downloading {filename} from Hugging Face repo {HF_MODEL_REPO_ID}...")
     return hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=filename)
+
+
+def space_asset_path(*parts: str) -> str:
+    root_path = project_path(*parts)
+    if os.path.exists(root_path):
+        return root_path
+    return backend_path(*parts)
 
 
 def normalize_token(token: str) -> str:
@@ -499,10 +510,10 @@ class TextToMotionBrain(nn.Module):
 # --- 3. LOAD MODELS INTO MEMORY ---
 print("Loading KSL Vocabulary...")
 try:
-    with open(backend_path("ksl_vocab.json"), "r", encoding="utf-8") as f:
+    with open(space_asset_path("ksl_vocab.json"), "r", encoding="utf-8") as f:
         vocab = json.load(f)
 except FileNotFoundError:
-    print("WARNING: ksl_vocab.json not found! Please ensure it's in the Space backend folder.")
+    print("WARNING: ksl_vocab.json not found! Please ensure it's uploaded to the Space root.")
     vocab = {"<PAD>": 0}
 
 print("Booting up KSL Generative Engine...")
@@ -520,11 +531,11 @@ brain.eval()
 
 print("Loading retrieval gloss metadata...")
 try:
-    with open(model_asset_path("data", "index_meta.pkl"), "rb") as f:
+    with open(model_asset_path("index_meta.pkl"), "rb") as f:
         retrieval_meta = pickle.load(f)
 
     rvq_checkpoint = torch.load(
-        model_asset_path("ml", "rvq_vae_best.pth"),
+        model_asset_path("rvq_vae_best.pth"),
         map_location="cpu",
         weights_only=True,
     )
@@ -651,6 +662,16 @@ app_graph = workflow.compile()
 # --- 6. API ENDPOINTS ---
 class TranslateRequest(BaseModel):
     sentence: str
+
+
+@app.get("/")
+async def health_check():
+    return {
+        "status": "running",
+        "service": "Signvrse Generative AI API",
+        "docs": "/docs",
+    }
+
 
 @app.post("/translate-to-sign")
 async def generate_sign_language(req: TranslateRequest):
