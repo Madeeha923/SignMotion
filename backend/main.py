@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
 from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError, HfHubHTTPError
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel
 
@@ -26,7 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # --- 1. SETUP ---
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+PROJECT_ROOT = BACKEND_DIR if os.path.exists(os.path.join(BACKEND_DIR, "ksl_vocab.json")) else os.path.dirname(BACKEND_DIR)
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
@@ -44,6 +45,8 @@ app.add_middleware(
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 HF_MODEL_REPO_ID = os.getenv("HF_MODEL_REPO_ID", "madeeha01/signmotion")
+HF_MODEL_REPO_TYPE = os.getenv("HF_MODEL_REPO_TYPE", "space").strip().lower() or "space"
+HF_TOKEN = os.getenv("HF_TOKEN") or None
 MAX_FRAMES = 150
 MAX_RETRIEVAL_SEQUENCE_FRAMES = 180
 CHUNK_COUNT = 40
@@ -138,8 +141,30 @@ def model_asset_path(*parts: str) -> str:
         return local_path
 
     filename = "/".join(parts)
-    print(f"Downloading {filename} from Hugging Face repo {HF_MODEL_REPO_ID}...")
-    return hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=filename)
+    configured_repo_type = None if HF_MODEL_REPO_TYPE in {"model", "models", "none"} else HF_MODEL_REPO_TYPE
+    repo_types = []
+    for repo_type in [configured_repo_type, "space", None]:
+        if repo_type not in repo_types:
+            repo_types.append(repo_type)
+
+    last_error = None
+    for repo_type in repo_types:
+        repo_label = repo_type or "model"
+        print(f"Downloading {filename} from Hugging Face {repo_label} repo {HF_MODEL_REPO_ID}...")
+        try:
+            return hf_hub_download(
+                repo_id=HF_MODEL_REPO_ID,
+                filename=filename,
+                repo_type=repo_type,
+                token=HF_TOKEN,
+            )
+        except (EntryNotFoundError, HfHubHTTPError) as error:
+            last_error = error
+            print(f"Could not download {filename} from {repo_label} repo: {error}")
+
+    raise FileNotFoundError(
+        f"{filename} was not found locally or in Hugging Face repo {HF_MODEL_REPO_ID}."
+    ) from last_error
 
 
 def space_asset_path(*parts: str) -> str:
