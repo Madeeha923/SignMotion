@@ -4,7 +4,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import Avatar from './Avatar';
 
-const API_BASE_URL = 'https://madeeha01-signvrse.hf.space';
+const API_BASE_URL = 'https://madeeha01-signmotion.hf.space';
 
 export default function App() {
   const [inputText, setInputText] = useState("");
@@ -25,7 +25,12 @@ export default function App() {
       setAnimationData(Array.isArray(response.data.final_3d_data) ? response.data.final_3d_data : []);
     } catch (error) {
       console.error('Error talking to backend:', error);
-      setGlossText('Error connecting to server.');
+      const message =
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        'Error connecting to server.';
+      setGlossText(`Error: ${message}`);
       setAnimationData([]);
     }
 
