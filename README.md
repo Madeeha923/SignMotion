@@ -1,111 +1,51 @@
-# Signvrse Translator
+#  Signvrse: English to 3D Kenyan Sign Language Translator
 
-Signvrse is a  Sign Language (SL) translator prototype that converts English text into SL gloss and renders the result as 3D avatar motion in the browser.
+**Live Web Demo:** [Signvrse on Vercel](https://sign-motion.vercel.app/)  
+**Cloud Backend:** [Hugging Face Space](https://huggingface.co/spaces/madeeha01/signmotion)
 
-The frontend is built with React, Vite, Three.js, React Three Fiber, and Drei. It connects to a FastAPI backend that handles English-to-KSL gloss translation, motion generation, and animation-frame creation.
+---
 
-## Project Overview
+##  Overview
+**Signvrse** is an end-to-end Hybrid AI engine that translates natural English into real-time 3D Kenyan Sign Language (KSL) animations. It utilizes a LangGraph agentic workflow to convert English to KSL gloss and intelligently routes the request to either a FAISS-based retrieval database or a custom PyTorch generative pipeline. This custom deep learning architecture, trained on over 12,000 spatial-temporal sequences, uses a decoupled Autoencoder and Bi-LSTM to dynamically synthesize exact 3D skeletal coordinates for unseen phrases. The system completely bypasses heavy video rendering by streaming these raw mathematical joint rotations directly to a React Three Fiber frontend, instantly animating a 3D avatar at a seamless 60 frames per second.
 
-The application flow is:
+##  Key Features
+* **Real-Time 3D Rendering:** Bypasses heavy MP4 generation by rendering motion mathematically in the browser at 60 FPS.
+* **Agentic NLP Translation:** Uses an LLM agent to accurately translate English grammar into proper KSL Gloss (dropping articles, restructuring verbs).
+* **Hybrid RAG Pipeline:** Intelligently searches a vector database for authentic human motion sequences before attempting to generate new ones.
+* **Dynamic Generative Fallback:** Uses a custom-trained Autoencoder and Bi-LSTM to invent mathematically accurate 3D skeletal movements for completely unseen vocabulary.
+* **Device Agnostic:** Runs entirely in the cloud, meaning the 3D web interface works instantly on mobile phones, tablets, and low-end laptops.
 
-1. A user types an English sentence in the frontend.
-2. The React app sends the sentence to the backend endpoint `/translate-to-sign`.
-3. The backend translates the sentence into SL gloss.
-4. The backend generates avatar animation frames from retrieval data or trained PyTorch models.
-5. The frontend receives the gloss and animation data.
-6. The 3D avatar applies the returned body, hand, and finger rotations in real time.
+## Tech Stack
+* **Frontend:** React.js, Vite, React Three Fiber, Drei (WebGL).
+* **Backend:** Python, FastAPI, LangGraph, OpenAI API.
+* **Machine Learning:** PyTorch, FAISS, NumPy, Pandas.
+* **Deployment:** Vercel (Frontend), Hugging Face Spaces & Docker (Backend).
 
-## Frontend Stack
+---
 
-- React
-- Vite
-- Axios
-- Three.js
-- `@react-three/fiber`
-- `@react-three/drei`
+##  How It Works (The Pipeline)
 
-## Backend Stack
+### 1. The Data & Training (Kaggle)
+The foundation of the project is built on 12,467 continuous spatial-temporal sequences. Instead of a direct text-to-3D map, the AI was trained in two stages:
+* **The Body (Autoencoder):** Compresses 668 physical features into a stable 512-dimensional latent space, teaching the AI the physical limits of human joints.
+* **The Brain (Bi-LSTM):** Reads KSL vocabulary and learns to project it into the safe 512-dimensional latent space.
 
-- Python
-- FastAPI
-- Uvicorn
-- PyTorch
-- LangGraph
-- Gemini API
-- NumPy
-- KSL vocabulary and trained model checkpoints
+### 2. The Backend Engine
+When a user submits text, the backend acts as an autonomous router:
+* It translates the English to KSL Gloss.
+* It checks the FAISS index for high-fidelity, real human motion.
+* If no video exists, it triggers the PyTorch generative models to synthesize the raw $X, Y, Z$ Euler rotations dynamically.
 
-## Main Frontend Files
+### 3. The Frontend UI
+The frontend receives a lightweight JSON payload of raw math. Using a `useFrame` loop in React Three Fiber, it applies these exact Euler rotations to the skeleton of a `.glb` 3D model (or a custom node visualizer) in real-time.
 
-- `src/App.jsx` - Main UI, input handling, API call, and 3D canvas setup.
-- `src/Avatar.jsx` - Loads the GLB avatar and applies generated animation frames to skeleton bones.
-- `src/main.jsx` - React app entry point.
-- `public/models/avatar.glb` - 3D avatar model.
+---
 
-## How It Works
-
-The frontend keeps three important pieces of state:
-
-- `inputText` - the English sentence entered by the user.
-- `glossText` - the KSL gloss returned by the backend.
-- `animationData` - frame-by-frame avatar rotation data returned by the backend.
-
-When the user clicks **TRANSLATE**, the app sends:
-
-```js
-axios.post('http://localhost:8000/translate-to-sign', {
-  sentence: inputText,
-})
-```
-
-The backend responds with:
-
-```json
-{
-  "status": "success",
-  "gloss_used": "KSL GLOSS",
-  "final_3d_data": []
-}
-```
-
-`Avatar.jsx` receives `final_3d_data` and applies each frame to the avatar skeleton using React Three Fiber's `useFrame`. The animation updates around 30 times per second and controls the spine, head, shoulders, arms, hands, and simplified finger curls.
-
-## Running The Project
-
-Start the backend first from the project root:
-
-```bash
-cd backend
-python main.py
-```
-
-The backend should run on:
-
+##  Project Structure
 ```text
-http://localhost:8000
-```
-
-Then start the frontend:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The frontend will usually run on:
-
-```text
-http://localhost:5173
-```
-
-## Required Backend Files
-
-The backend depends on model and data files such as:
-
-- `backend/ksl_vocab.json`
-- `backend/ksl_text_brain.pth`
-- `backend/ksl_movement_dictionary.pth`
-- `backend/ml/rvq_vae_best.pth`
-- `backend/data/index_meta.pkl`
-- `backend/data/faiss_index.bin`
+├── backend/                 # FastAPI server, LangGraph agents, and ML models[cite: 3]
+│   └── data/                # Contains metadata and FAISS indices (faiss_index.bin)[cite: 3]
+├── frontend/                # React Three Fiber UI and 3D Avatar components
+├── Dockerfile               # Containerization instructions for Hugging Face deployment[cite: 3]
+├── .gitignore               # Git ignore rules[cite: 3]
+└── README.md                # Project documentation[cite: 3]
